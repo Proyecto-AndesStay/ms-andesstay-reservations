@@ -2,6 +2,7 @@ package com.andesstay.reservations.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -22,12 +23,16 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
+                        // Permitir las peticiones pre-vuelo (CORS OPTIONS) desde Angular
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Rutas públicas (H2 Console)
                         .requestMatchers("/h2-console/**").permitAll()
+                        // Todo lo demás requiere autenticación (Token de Microsoft)
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
 
-        // Permitir frames para ver la consola de H2 localmente
+        // Permitir frames para ver la consola de H2 localmente sin que Spring Security lo bloquee
         http.headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()));
 
         return http.build();
