@@ -17,15 +17,18 @@ public class Reservation {
     private String guestName;
 
     @Column(nullable = true)
+    private String roomType;
+
+    @Column(nullable = true)
     private String guestEmail;
 
     @Column(nullable = true)
     private Long propertyId;
 
-    @Column(nullable = true)
+    @Column(nullable = false)
     private LocalDate checkInDate;
 
-    @Column(nullable = true)
+    @Column(nullable = false)
     private LocalDate checkOutDate;
 
     @Column(nullable = true)
@@ -45,6 +48,9 @@ public class Reservation {
         if (this.status == null || this.status.isEmpty()) {
             this.status = "CREADA";
         }
+        if (this.roomType == null || this.roomType.isEmpty()) {
+            this.roomType = "Cabaña Estándar";
+        }
         if (this.guestEmail == null) {
             this.guestEmail = "huesped@andesstay.com";
         }
@@ -54,12 +60,6 @@ public class Reservation {
         if (this.totalPrice == null) {
             this.totalPrice = new BigDecimal("120000.00");
         }
-        if (this.checkInDate == null) {
-            this.checkInDate = LocalDate.now();
-        }
-        if (this.checkOutDate == null) {
-            this.checkOutDate = LocalDate.now().plusDays(2);
-        }
     }
 
     // Getters & Setters
@@ -68,6 +68,9 @@ public class Reservation {
 
     public String getGuestName() { return guestName; }
     public void setGuestName(String guestName) { this.guestName = guestName; }
+
+    public String getRoomType() { return roomType; }
+    public void setRoomType(String roomType) { this.roomType = roomType; }
 
     public String getGuestEmail() { return guestEmail; }
     public void setGuestEmail(String guestEmail) { this.guestEmail = guestEmail; }

@@ -6,8 +6,10 @@ import com.andesstay.reservations.producer.ReservationMessageProducer;
 import com.andesstay.reservations.repository.ReservationRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -25,13 +27,19 @@ public class ReservationController {
         this.messageProducer = messageProducer;
     }
 
-    // Listar todas las reservas (GET)
+    // Captura fechas con formato inválido (ej. 99-99-9999) y devuelve un 400 claro
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Object> handleInvalidFormat(HttpMessageNotReadableException ex) {
+        return ResponseEntity.badRequest().body(
+                Map.of("message", "Formato de datos o fecha inválido. Use fechas reales en formato YYYY-MM-DD.")
+        );
+    }
+
     @GetMapping
     public List<Reservation> getAllReservations() {
         return reservationRepository.findAll();
     }
 
-    // Obtener una reserva por ID (GET)
     @GetMapping("/{id}")
     public ResponseEntity<Reservation> getReservationById(@PathVariable Long id) {
         return reservationRepository.findById(id)
@@ -39,43 +47,58 @@ public class ReservationController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // Crear una nueva reserva (POST)
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public Reservation createReservation(@RequestBody Reservation reservation) {
+    public ResponseEntity<?> createReservation(@RequestBody Reservation reservation) {
+        if (reservation.getGuestName() == null || reservation.getGuestName().trim().length() < 3) {
+            return ResponseEntity.badRequest().body(Map.of("message", "El nombre del huésped es obligatorio (mínimo 3 caracteres)."));
+        }
+        if (reservation.getCheckInDate() == null || reservation.getCheckOutDate() == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Las fechas de Check-In y Check-Out son obligatorias."));
+        }
+
+        LocalDate today = LocalDate.now();
+        LocalDate maxAllowedDate = today.plusYears(3);
+
+        if (reservation.getCheckInDate().isBefore(today.minusDays(1)) || reservation.getCheckInDate().isAfter(maxAllowedDate)
+                || reservation.getCheckOutDate().isAfter(maxAllowedDate)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Fecha fuera de rango permitido. Ingrese una fecha válida entre hoy y los próximos 3 años."));
+        }
+
+        if (!reservation.getCheckOutDate().isAfter(reservation.getCheckInDate())) {
+            return ResponseEntity.badRequest().body(Map.of("message", "La fecha de Check-Out debe ser posterior a la fecha de Check-In."));
+        }
+
         if (reservation.getStatus() == null || reservation.getStatus().isEmpty()) {
             reservation.setStatus("CREADA");
         }
+
         Reservation savedReservation = reservationRepository.save(reservation);
 
-        // Envío asíncrono a RabbitMQ: Notificación de reserva creada
         NotificationPayload payload = new NotificationPayload(
                 savedReservation.getId(),
                 "contacto@huesped.cl",
-                "Huesped AndesStay",
-                "UNIDAD-1",
+                savedReservation.getGuestName(),
+                savedReservation.getRoomType() != null ? savedReservation.getRoomType() : "UNIDAD-1",
                 savedReservation.getStatus(),
                 "Su reserva #" + savedReservation.getId() + " ha sido recibida con exito en estado CREADA."
         );
         messageProducer.sendEmailNotification(payload);
 
-        return savedReservation;
+        return ResponseEntity.status(HttpStatus.CREATED).body(savedReservation);
     }
 
-    // Cambiar estado de reserva (PUT) -> Endpoint requerido en Seccion 5 del Caso
     @PutMapping("/{id}/status")
     public ResponseEntity<?> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
         String newStatus = body.get("status");
         if (newStatus == null || newStatus.isBlank()) {
-            return ResponseEntity.badRequest().body("El campo status es requerido");
+            return ResponseEntity.badRequest().body(Map.of("message", "El campo status es requerido"));
         }
 
         return reservationRepository.findById(id).map(reservation -> {
-            // Regla de negocio Seccion 3: No se puede hacer check-in sin estar CONFIRMADA
             if (("CHECKIN_PENDIENTE".equalsIgnoreCase(newStatus) || "EN_ESTADIA".equalsIgnoreCase(newStatus))
                     && !"CONFIRMADA".equalsIgnoreCase(reservation.getStatus())
                     && !"CHECKIN_PENDIENTE".equalsIgnoreCase(reservation.getStatus())) {
-                return ResponseEntity.badRequest().body("Regla de negocio: No se puede hacer check-in sin estar CONFIRMADA.");
+                return ResponseEntity.badRequest().body(Map.of("message", "Regla de negocio: No se puede hacer check-in sin estar CONFIRMADA."));
             }
 
             reservation.setStatus(newStatus.toUpperCase());
@@ -84,13 +107,12 @@ public class ReservationController {
             NotificationPayload payload = new NotificationPayload(
                     updated.getId(),
                     "contacto@huesped.cl",
-                    "Huesped AndesStay",
-                    "UNIDAD-1",
+                    updated.getGuestName(),
+                    updated.getRoomType() != null ? updated.getRoomType() : "UNIDAD-1",
                     updated.getStatus(),
                     "Actualizacion de reserva #" + updated.getId() + ": " + updated.getStatus()
             );
 
-            // Si se confirma, dispara Email, Housekeeping y Voucher segun la topologia
             if ("CONFIRMADA".equalsIgnoreCase(newStatus)) {
                 messageProducer.sendEmailNotification(payload);
                 messageProducer.sendHousekeepingTicket(payload);
@@ -103,7 +125,6 @@ public class ReservationController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    // Eliminar una reserva por ID (DELETE)
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteReservation(@PathVariable Long id) {
         if (reservationRepository.existsById(id)) {
